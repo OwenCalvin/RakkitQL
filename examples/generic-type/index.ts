@@ -1,14 +1,17 @@
 import "reflect-metadata";
-import { ApolloServer } from "apollo-server";
 import * as path from "path";
+import { ApolloServer } from "apollo-server";
 import { buildSchema } from "../../src";
+import { AppResolver } from "./resolvers";
+import { TestResolver } from "./tests/test-resolver";
+import { ClassInputType } from "./tests/classes/input-type";
 
-import { RecipeResolver } from "./recipe-resolver";
+ClassInputType;
 
 async function bootstrap() {
   // build TypeGraphQL executable schema
   const schema = await buildSchema({
-    resolvers: [RecipeResolver],
+    resolvers: [AppResolver, TestResolver],
     // automatically create `schema.gql` file with schema definition in current folder
     emitSchemaFile: path.resolve(__dirname, "schema.gql"),
   });
