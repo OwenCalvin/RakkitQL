@@ -1,6 +1,6 @@
-![logo](https://github.com/19majkel94/type-graphql/blob/master/logo.png?raw=true)
+<!--![logo](https://github.com/19majkel94/type-graphql/blob/master/logo.png?raw=true)-->
 
-# TypeGraphQL
+# RakkitQL
 [![npm version](https://badge.fury.io/js/type-graphql.svg)](https://badge.fury.io/js/type-graphql)
 [![Build Status](https://travis-ci.org/19majkel94/type-graphql.svg?branch=master)](https://travis-ci.org/19majkel94/type-graphql)
 [![codecov](https://codecov.io/gh/19majkel94/type-graphql/branch/master/graph/badge.svg)](https://codecov.io/gh/19majkel94/type-graphql)
@@ -183,3 +183,6 @@ PRs are welcome, but first check, test and build your code before committing it.
 * [Allowing changes to a pull request branch created from a fork](https://help.github.com/articles/allowing-changes-to-a-pull-request-branch-created-from-a-fork/)
 
 If you want to add a new big feature, please create a proposal first, where we can discuss the idea and implementation details. This will prevent wasting of your time if the PR be rejected.
+
+## Author
+This is a fork of type-graphql by Michał Lytek

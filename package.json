@@ -1,20 +1,20 @@
 {
-  "name": "type-graphql",
+  "name": "rakkitql",
   "version": "0.16.0",
   "main": "./dist/index.js",
   "author": {
-    "name": "Michał Lytek",
-    "url": "https://github.com/19majkel94"
+    "name": "Owen Calvin",
+    "url": "https://github.com/owencalvin"
   },
   "license": "MIT",
   "readmeFilename": "README.md",
   "description": "Create GraphQL schema and resolvers with TypeScript, using classes and decorators!",
   "repository": {
     "type": "git",
-    "url": "https://github.com/19majkel94/type-graphql.git"
+    "url": "https://github.com/owencalvin/RakkitQL.git"
   },
   "bugs": {
-    "url": "https://github.com/19majkel94/type-graphql/issues"
+    "url": "https://github.com/owencalvin/RakkitQL/issues"
   },
   "keywords": [
     "typescript",
