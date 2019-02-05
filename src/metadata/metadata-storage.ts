@@ -12,6 +12,9 @@ import {
   ResolverClassMetadata,
   SubscriptionResolverMetadata,
   MiddlewareMetadata,
+  ModelMetadata,
+  DestinationMetadata,
+  TypeClassMetadata,
 } from "./definitions";
 import { ClassType } from "../interfaces";
 import { NoExplicitTypeError } from "../errors";
@@ -28,13 +31,20 @@ export class MetadataStorage {
   subscriptions: SubscriptionResolverMetadata[] = [];
   fieldResolvers: FieldResolverMetadata[] = [];
   objectTypes: ClassMetadata[] = [];
+  objectArgs: ClassMetadata[] = [];
   inputTypes: ClassMetadata[] = [];
-  argumentTypes: ClassMetadata[] = [];
+  argumentTypes: TypeClassMetadata[] = [];
   interfaceTypes: ClassMetadata[] = [];
+  args: ClassMetadata[] = [];
   authorizedFields: AuthorizedMetadata[] = [];
   enums: EnumMetadata[] = [];
   unions: UnionMetadataWithSymbol[] = [];
   middlewares: MiddlewareMetadata[] = [];
+
+  models: ModelMetadata[] = [];
+  destinations: DestinationMetadata[] = [];
+  modelTypes: TypeClassMetadata[] = [];
+  destinationTypes: TypeClassMetadata[] = [];
 
   private resolverClasses: ResolverClassMetadata[] = [];
   private fields: FieldMetadata[] = [];
@@ -58,6 +68,12 @@ export class MetadataStorage {
   }
   collectObjectMetadata(definition: ClassMetadata) {
     this.objectTypes.push(definition);
+  }
+  collectModelMetadata(definition: ModelMetadata) {
+    this.models.push(definition);
+  }
+  collectDestinationMetadata(definition: DestinationMetadata) {
+    this.destinations.push(definition);
   }
   collectInputMetadata(definition: ClassMetadata) {
     this.inputTypes.push(definition);
@@ -103,6 +119,7 @@ export class MetadataStorage {
     this.buildClassMetadata(this.inputTypes);
     this.buildClassMetadata(this.argumentTypes);
     this.buildClassMetadata(this.interfaceTypes);
+    this.buildClassMetadata(this.models);
 
     this.buildFieldResolverMetadata(this.fieldResolvers);
 
@@ -111,6 +128,8 @@ export class MetadataStorage {
     this.buildResolversMetadata(this.subscriptions);
 
     this.buildExtendedResolversMetadata();
+
+    this.buildModels(this.models);
   }
 
   clear() {
@@ -126,14 +145,18 @@ export class MetadataStorage {
     this.enums = [];
     this.unions = [];
     this.middlewares = [];
+    this.models = [];
+    this.destinations = [];
 
     this.resolverClasses = [];
     this.fields = [];
     this.params = [];
   }
 
-  private buildClassMetadata(definitions: ClassMetadata[]) {
-    definitions.forEach(def => {
+  private buildClassMetadata(definitions: ClassMetadata[]): void;
+  private buildClassMetadata(definitions: ModelMetadata[]): void;
+  private buildClassMetadata(definitions: ClassMetadata[] | ModelMetadata[]): void {
+    for (const def of definitions) {
       const fields = this.fields.filter(field => field.target === def.target);
       fields.forEach(field => {
         field.roles = this.findFieldRoles(field.target, field.name);
@@ -147,7 +170,107 @@ export class MetadataStorage {
         );
       });
       def.fields = fields;
+    }
+  }
+
+  private getModelTypes(model: ModelMetadata) {
+    if (model.models) {
+      return this.objectTypes.filter(ot => model.models!.indexOf(ot.target) > -1);
+    }
+    return [];
+  }
+
+  private getFieldTypeName(...types: string[]) {
+    return types.join("_");
+  }
+
+  private buildModels(definitions: ModelMetadata[]) {
+    definitions.map(def => {
+      const modelTypes = this.getModelTypes(def);
+      modelTypes.map(ot => {
+        const baseName = this.getFieldTypeName(def.name, ot.name);
+        const destinationFields: FieldMetadata[] = this.destinations
+          .filter(destination => destination.target === def.target)
+          .map<FieldMetadata>(field => {
+            const typeName = this.getFieldTypeName(baseName, field.name);
+            const destinationField = {
+              name: field.name,
+              target: field.target,
+              typeOptions: {
+                nullable: field.nullable,
+                array: field.array,
+                defaultValue: undefined,
+              },
+              params: [],
+              schemaName: field.name,
+              getType: () => typeName,
+              destinationField: true,
+              middlewares: [],
+              complexity: undefined,
+              deprecationReason: undefined,
+              description: undefined,
+              getter: false,
+              setter: false,
+              isAccessor: false,
+            };
+            this.modelTypes.push({
+              ...ot,
+              name: typeName,
+              model: def,
+              type: ot,
+              destination: false,
+              fields: this.compileFields(ot, def, field),
+              toType: def.toType === "ArgsType" ? "InputType" : def.toType,
+            });
+            return destinationField;
+          });
+        const destinationType: TypeClassMetadata = {
+          name: this.getFieldTypeName(baseName, "Wrapper"),
+          target: def.target,
+          toType: def.toType,
+          model: def,
+          type: ot,
+          destination: true,
+          fields: def
+            .fields!.map(field => {
+              return field;
+            })
+            .concat(destinationFields),
+        };
+        if (def.toType === "ArgsType") {
+          this.argumentTypes.push(destinationType);
+        } else {
+          this.destinationTypes.push(destinationType);
+        }
+      });
     });
+  }
+
+  private compileFields(
+    definition: ClassMetadata,
+    model: ModelMetadata,
+    destination: DestinationMetadata,
+  ): FieldMetadata[] {
+    model.transform = model.transform || {};
+    destination.transform = destination.transform || {};
+    return definition.fields!.map(
+      (field): FieldMetadata => {
+        const modelRelation = this.getModelTypes(model).find(mt => mt.target === field.getType());
+        const newField = {
+          ...field,
+          typeOptions: {
+            ...field.typeOptions,
+            nullable: destination.transform!.nullable || model.transform!.nullable,
+          },
+          getType: modelRelation
+            ? () => this.getFieldTypeName(model.name, modelRelation.name, destination.name)
+            : field.getType,
+        };
+        model.transform!.apply && model.transform!.apply!(newField);
+        destination.transform!.apply && destination.transform!.apply!(newField);
+        return newField;
+      },
+    );
   }
 
   private buildResolversMetadata(definitions: BaseResolverMetadata[]) {
@@ -201,10 +324,15 @@ export class MetadataStorage {
             roles: def.roles!,
             middlewares: def.middlewares!,
             params: def.params!,
+            fieldResolver: true,
+            getter: true,
+            setter: false,
+            isAccessor: true,
           };
           this.collectClassFieldMetadata(fieldMetadata);
           objectType.fields!.push(fieldMetadata);
         } else {
+          objectTypeField.fieldResolver = true;
           objectTypeField.complexity = def.complexity;
           if (objectTypeField.params!.length === 0) {
             objectTypeField.params = def.params!;

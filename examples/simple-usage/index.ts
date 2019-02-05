@@ -2,7 +2,6 @@ import "reflect-metadata";
 import { ApolloServer } from "apollo-server";
 import * as path from "path";
 import { buildSchema } from "../../src";
-
 import { RecipeResolver } from "./recipe-resolver";
 
 async function bootstrap() {

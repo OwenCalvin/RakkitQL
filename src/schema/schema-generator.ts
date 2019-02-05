@@ -23,6 +23,8 @@ import {
   ParamMetadata,
   ClassMetadata,
   SubscriptionResolverMetadata,
+  ArgsParamMetadata,
+  TypeClassMetadata,
 } from "../metadata/definitions";
 import { TypeOptions, TypeValue } from "../decorators/types";
 import { wrapWithTypeOptions, convertTypeIfScalar, getEnumValuesMap } from "../helpers/types";
@@ -46,6 +48,13 @@ interface ObjectTypeInfo {
   target: Function;
   type: GraphQLObjectType;
 }
+interface ModelTypeInfo {
+  name: string;
+  model: ClassMetadata;
+  typeObject: ClassMetadata;
+  destination: boolean;
+  type: GraphQLObjectType | GraphQLInputObjectType;
+}
 interface InputObjectTypeInfo {
   target: Function;
   type: GraphQLInputObjectType;
@@ -62,15 +71,20 @@ interface UnionTypeInfo {
   unionSymbol: symbol;
   type: GraphQLUnionType;
 }
+interface ArgsInfo {
+  target: Function;
+}
 // tslint:disable-next-line:no-empty-interface
 export interface SchemaGeneratorOptions extends BuildContextOptions {}
 
 export abstract class SchemaGenerator {
   private static objectTypesInfo: ObjectTypeInfo[] = [];
+  private static ArgsInfo: ClassMetadata[] = [];
   private static inputTypesInfo: InputObjectTypeInfo[] = [];
   private static interfaceTypesInfo: InterfaceTypeInfo[] = [];
   private static enumTypesInfo: EnumTypeInfo[] = [];
   private static unionTypesInfo: UnionTypeInfo[] = [];
+  private static modelTypesInfo: ModelTypeInfo[] = [];
 
   static async generateFromMetadata(options: SchemaGeneratorOptions): Promise<GraphQLSchema> {
     const schema = this.generateFromMetadataSync(options);
@@ -113,7 +127,10 @@ export abstract class SchemaGenerator {
     fieldName: string,
     typeName: string,
   ): unknown | undefined {
-    const defaultValueFromInitializer = typeInstance[fieldName];
+    let defaultValueFromInitializer;
+    try {
+      defaultValueFromInitializer = typeInstance[fieldName];
+    } catch (err) {}
     if (
       typeOptions.defaultValue !== undefined &&
       defaultValueFromInitializer !== undefined &&
@@ -341,6 +358,81 @@ export abstract class SchemaGenerator {
         }),
       };
     });
+
+    const models = getMetadataStorage().modelTypes.concat(getMetadataStorage().destinationTypes);
+    models.map(model => {
+      let type: GraphQLObjectType | GraphQLInputObjectType | undefined;
+      const baseObject = {
+        name: model.name,
+        model: model.model!,
+        typeObject: model.type!,
+        destination: model.destination!,
+      };
+      switch (model.toType) {
+        case "ObjectType":
+          type = new GraphQLObjectType({
+            name: model.name,
+            fields: () => {
+              const fields = model.fields!.reduce<GraphQLFieldConfigMap<any, any>>(
+                (fieldsMap, field) => {
+                  const fieldResolverMetadata = getMetadataStorage().fieldResolvers.find(
+                    resolver =>
+                      resolver.getObjectType!() === model.target &&
+                      resolver.methodName === field.name &&
+                      (resolver.resolverClassMetadata === undefined ||
+                        resolver.resolverClassMetadata.isAbstract === false),
+                  );
+                  fieldsMap[field.schemaName] = {
+                    type: this.getGraphQLOutputType(field.name, field.getType(), field.typeOptions),
+                    complexity: field.complexity,
+                    args: this.generateHandlerArgs(field.params!),
+                    resolve: fieldResolverMetadata
+                      ? createAdvancedFieldResolver(fieldResolverMetadata)
+                      : createSimpleFieldResolver(field),
+                    description: field.description,
+                    deprecationReason: field.deprecationReason,
+                  };
+                  return fieldsMap;
+                },
+                {},
+              );
+              return fields;
+            },
+          });
+          break;
+
+        case "InputType":
+          const inputInstance = new (model.target as any)();
+          type = new GraphQLInputObjectType({
+            name: model.name,
+            fields: () => {
+              return model.fields!.reduce<GraphQLInputFieldConfigMap>((fieldsMap, field) => {
+                field.typeOptions.defaultValue = this.getDefaultValue(
+                  inputInstance,
+                  field.typeOptions,
+                  field.name,
+                  model.name,
+                );
+
+                fieldsMap[field.schemaName] = {
+                  description: field.description,
+                  type: this.getGraphQLInputType(field.name, field.getType(), field.typeOptions),
+                  defaultValue: field.typeOptions.defaultValue,
+                };
+                return fieldsMap;
+              }, {});
+            },
+          });
+          break;
+      }
+
+      if (type) {
+        this.modelTypesInfo.push({
+          ...baseObject,
+          type,
+        });
+      }
+    });
   }
 
   private static buildRootQueryType(): GraphQLObjectType {
@@ -376,6 +468,7 @@ export abstract class SchemaGenerator {
     return [
       ...this.objectTypesInfo.map(it => it.type),
       ...this.interfaceTypesInfo.map(it => it.type),
+      ...this.modelTypesInfo.map(it => it.type),
     ];
   }
 
@@ -449,21 +542,43 @@ export abstract class SchemaGenerator {
           defaultValue: param.typeOptions.defaultValue,
         };
       } else if (param.kind === "args") {
-        const argumentType = getMetadataStorage().argumentTypes.find(
-          it => it.target === param.getType(),
-        )!;
-        let superClass = Object.getPrototypeOf(argumentType.target);
-        while (superClass.prototype !== undefined) {
-          const superArgumentType = getMetadataStorage().argumentTypes.find(
-            it => it.target === superClass,
-          )!;
-          this.mapArgFields(superArgumentType, args);
-          superClass = Object.getPrototypeOf(superClass);
+        try {
+          const argumentTypes = getMetadataStorage().argumentTypes;
+          const argumentType = argumentTypes.find(it => {
+            return this.matchArg(it, param);
+          })!;
+          let superClass = Object.getPrototypeOf(argumentType.target);
+          while (superClass.prototype !== undefined) {
+            const superArgumentType = getMetadataStorage().argumentTypes.find(
+              it => it.target === superClass,
+            )!;
+            this.mapArgFields(superArgumentType, args);
+            superClass = Object.getPrototypeOf(superClass);
+          }
+          this.mapArgFields(argumentType, args);
+        } catch (err) {
+          const fakeUsage = getMetadataStorage().modelTypes.find(it => this.matchArg(it, param));
+          if (fakeUsage) {
+            throw new Error(
+              `Do not use the model ${
+                (param.getType() as Function).name
+              } with @Args if it's not declared as a ArgsType`,
+            );
+          } else {
+            throw err;
+          }
         }
-        this.mapArgFields(argumentType, args);
       }
       return args;
     }, {});
+  }
+
+  private static matchArg(item: TypeClassMetadata, param: ArgsParamMetadata) {
+    const sameTarget = item.target === param.getType();
+    if (item.type && param.typeOptions.type) {
+      return item.type.name === param.typeOptions.type.name && sameTarget;
+    }
+    return sameTarget;
   }
 
   private static mapArgFields(
@@ -493,28 +608,41 @@ export abstract class SchemaGenerator {
   ): GraphQLOutputType {
     let gqlType: GraphQLOutputType | undefined;
     gqlType = convertTypeIfScalar(type);
-    if (!gqlType) {
-      const objectType = this.objectTypesInfo.find(it => it.target === (type as Function));
-      if (objectType) {
-        gqlType = objectType.type;
+    if (!typeOptions.model) {
+      if (!gqlType) {
+        const objectType = this.objectTypesInfo.find(it => it.target === (type as Function));
+        if (objectType) {
+          gqlType = objectType.type;
+        }
+      }
+      if (!gqlType) {
+        const interfaceType = this.interfaceTypesInfo.find(it => it.target === (type as Function));
+        if (interfaceType) {
+          gqlType = interfaceType.type;
+        }
+      }
+      if (!gqlType) {
+        const enumType = this.enumTypesInfo.find(it => it.enumObj === (type as Function));
+        if (enumType) {
+          gqlType = enumType.type;
+        }
+      }
+      if (!gqlType) {
+        const unionType = this.unionTypesInfo.find(it => it.unionSymbol === (type as symbol));
+        if (unionType) {
+          gqlType = unionType.type;
+        }
       }
     }
     if (!gqlType) {
-      const interfaceType = this.interfaceTypesInfo.find(it => it.target === (type as Function));
-      if (interfaceType) {
-        gqlType = interfaceType.type;
-      }
-    }
-    if (!gqlType) {
-      const enumType = this.enumTypesInfo.find(it => it.enumObj === (type as Function));
-      if (enumType) {
-        gqlType = enumType.type;
-      }
-    }
-    if (!gqlType) {
-      const unionType = this.unionTypesInfo.find(it => it.unionSymbol === (type as symbol));
-      if (unionType) {
-        gqlType = unionType.type;
+      const modelType = this.modelTypesInfo.find(it => {
+        const sameTypeName = it.type.name === type;
+        const sameType =
+          it.model.target === typeOptions.model && it.typeObject.target === type && it.destination;
+        return it.type instanceof GraphQLObjectType && (sameTypeName || sameType);
+      });
+      if (modelType) {
+        gqlType = modelType.type as GraphQLObjectType;
       }
     }
     if (!gqlType) {
@@ -541,6 +669,17 @@ export abstract class SchemaGenerator {
       const enumType = this.enumTypesInfo.find(it => it.enumObj === (type as Function));
       if (enumType) {
         gqlType = enumType.type;
+      }
+    }
+    if (!gqlType) {
+      const modelType = this.modelTypesInfo.find(it => {
+        const sameTypeName = it.type.name === type;
+        const sameType =
+          it.model.target === typeOptions.model && it.typeObject.target === type && it.destination;
+        return it.type instanceof GraphQLInputObjectType && (sameTypeName || sameType);
+      });
+      if (modelType) {
+        gqlType = modelType.type as GraphQLInputObjectType;
       }
     }
     if (!gqlType) {
