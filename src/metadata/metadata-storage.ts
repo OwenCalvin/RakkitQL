@@ -40,15 +40,13 @@ export class MetadataStorage {
   enums: EnumMetadata[] = [];
   unions: UnionMetadataWithSymbol[] = [];
   middlewares: MiddlewareMetadata[] = [];
-
+  resolverClasses: ResolverClassMetadata[] = [];
+  fields: FieldMetadata[] = [];
+  params: ParamMetadata[] = [];
   genericTypes: GenericTypeMetadata[] = []; // All @GenericType
   genericFields: GenericFieldMetadata[] = []; // All @GenericFields
   subTypes: TypeClassMetadata[] = []; // Compiled type for a generic field
   wrapperTypes: TypeClassMetadata[] = []; // Compiled type that represent the GenericType class
-
-  private resolverClasses: ResolverClassMetadata[] = [];
-  private fields: FieldMetadata[] = [];
-  private params: ParamMetadata[] = [];
 
   constructor() {
     ensureReflectMetadataExists();

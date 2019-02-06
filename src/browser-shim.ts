@@ -35,3 +35,5 @@ export const Root = dummyDecorator;
 export const Subscription = dummyDecorator;
 export const createUnionType = dummyFn;
 export const UseMiddleware = dummyDecorator;
+export const GenericType = dummyDecorator;
+export const GenericField = dummyDecorator;
